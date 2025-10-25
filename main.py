@@ -8,8 +8,8 @@ def main():
 
     bc = Blockchain(difficulty_target="000")
     bc.generate_users(n=50)          # gali sumažinti, kad greičiau skaičiuotų
-    bc.generate_transactions(m=200)  # irgi mažiau, kad spėtų persukti
-    bc.mine_until_done(block_tx_count=10)
+    bc.generate_transactions(m=1000)  # irgi mažiau, kad spėtų persukti
+    bc.mine_until_done(block_tx_count=100)
 
     print("===== SUMMARY =====")
     print(bc.summary())
@@ -17,7 +17,7 @@ def main():
     end = time.time()
     print(f"Bendras vykdymo laikas: {end - start:.2f} s")
 
-    print("\n===== Blockchain v0.1 demo end =====")
+    print("\n===== Blockchain =====")
 
 if __name__ == "__main__":
     main()

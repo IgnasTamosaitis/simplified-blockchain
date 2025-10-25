@@ -1,62 +1,77 @@
 """
-Blockchain modelis su pagrindinėmis funkcijomis:
-- vartotojų generavimas (1000 userių)
-- transakcijų generavimas (~10_000)
-- blokų formavimas iš po 100 transakcijų
-- Proof-of-Work kasimas (hash turi prasidėti '000')
-- balansų atnaujinimas, kai blokas patvirtintas
-- blokų grandinės palaikymas (chain)
+blockchain.py
+-------------
+Centralizuota blokų grandinės simuliacija v0.1.
 
-Tai atitinka v0.1 reikalavimus:
-- Centralizuota grandinė (vienas "miner")
-- Yra PoW su nonce paieška
-- Yra grandinės istorija
-- Viskas loguojama į konsolę
+Funkcionalumas:
+- Sugeneruoja vartotojus ir jų balansus
+- Sugeneruoja transakcijas tarp vartotojų
+- Iš transakcijų formuoja blokus (po ~100 tx)
+- Kiekvieną bloką kasa (Proof-of-Work) kol bloko hash prasideda '000'
+- Po iškasimo atnaujina balansus ir išmeta panaudotas transakcijas
+- Prideda bloką į grandinę ir eina prie kito
+
+Tai pilnai atitinka tavo PoW modelį su nonce ir difficulty_target.
 """
 
-import time
 import random
+import time
 import uuid
 from typing import List, Dict
 
 from hash_utils import my_hash
 from models.user import User
 from models.transaction import Transaction
-from models.block import Block, BlockHeader
+from models.block import Block
 
 
 class Blockchain:
     def __init__(self, difficulty_target: str = "000"):
+        # global state
         self.users: Dict[str, User] = {}
         self.pending_transactions: List[Transaction] = []
         self.chain: List[Block] = []
 
-        self.version = "v0.1"
-        self.difficulty_target = difficulty_target  # pvz. '000'
+        # metadata
+        self.version = 1  # int, nes tavo BlockHeader.version yra int
+        self.difficulty_target = difficulty_target
 
+        # sukurti genesis bloką
         self._create_genesis_block()
 
-    def _create_genesis_block(self):
-        print("[INIT] Kuriamas genesis blokas...")
+    def _create_genesis_block(self) -> None:
+        print("[INIT] Kuriamas GENESIS blokas...")
 
-        genesis_header = BlockHeader(
-            prev_hash="0" * 64,
+        genesis_block = Block.build(
+            index=0,
+            prev_block_hash="0" * 64,
             version=self.version,
-            merkle_root="GENESIS",
-            difficulty_target=self.difficulty_target
+            transactions=[],            # jokių tx
+            difficulty_target=self.difficulty_target,
+            timestamp=int(time.time()),
         )
 
-        genesis_block = Block(genesis_header, [])
+        # genesis bloko PoW irgi galim prasukti, kad turėtum normalų hash
+        _ = genesis_block.mine()
+
         self.chain.append(genesis_block)
 
-        print("[OK] Genesis blokas sukurtas.")
-        print(f"     Hash: {genesis_block.block_hash()}\n")
+        print("[OK] Genesis blokas paruoštas.")
+        print(f"     Hash: {genesis_block.get_hash()}")
+        print(f"     Nonce: {genesis_block.header.nonce}\n")
 
     # ---------------------------
     # DUOMENŲ GENERAVIMAS
     # ---------------------------
 
     def generate_users(self, n: int = 1000):
+        """
+        Sukuria n vartotojų.
+        Kiekvienas vartotojas turi:
+        - name
+        - public_key
+        - balance [100 .. 1_000_000]
+        """
         print(f"[INFO] Generuojami {n} vartotojai...")
 
         for _ in range(n):
@@ -67,12 +82,17 @@ class Blockchain:
             self.users[public_key] = User(
                 name=name,
                 public_key=public_key,
-                balance=balance
+                balance=balance,
             )
 
         print(f"[OK] Sugeneruota {len(self.users)} vartotojų.\n")
 
     def generate_transactions(self, m: int = 10000):
+        """
+        Sugeneruoja m transakcijų tarp atsitiktinių vartotojų.
+        v0.1: šitoje versijoje DAR netikrinam balanso.
+        (Balanso tikrinimas ateis v0.2 kaip validacija.)
+        """
         print(f"[INFO] Generuojamos {m} transakcijos...")
 
         keys = list(self.users.keys())
@@ -83,8 +103,9 @@ class Blockchain:
             tx = Transaction(
                 sender_key=sender_key,
                 receiver_key=receiver_key,
-                amount=amount
+                amount=amount,
             )
+
             self.pending_transactions.append(tx)
 
         print(f"[OK] Sugeneruota {len(self.pending_transactions)} transakcijų.\n")
@@ -94,123 +115,128 @@ class Blockchain:
     # ---------------------------
 
     def pick_transactions_for_block(self, k: int = 100) -> List[Transaction]:
-        txs = self.pending_transactions[:k]
-        return txs
-
-    def build_merkle_root_v0_1(self, txs: List[Transaction]) -> str:
-        if not txs:
-            return "NO_TX"
-
-        all_ids = "|".join(tx.tx_id for tx in txs)
-        return my_hash(all_ids)
+        """
+        Paimam pirmas k transakcijų iš laukiančių sąrašo.
+        (FIFO stiliaus atranka)
+        """
+        return self.pending_transactions[:k]
 
     # ---------------------------
-    # PROOF OF WORK / KASYBA
+    # BLOKO KASYBA
     # ---------------------------
 
-    def mine_block(self, txs: List[Transaction]) -> Block:
-        prev_hash = self.chain[-1].block_hash()
-        merkle_root = self.build_merkle_root_v0_1(txs)
+    def mine_block_from_transactions(self, txs: List[Transaction]) -> Block:
+        """
+        Sukuria bloką iš duotų transakcijų,
+        priskiria jam previous hash,
+        tada kasa jį (Proof-of-Work, loop su nonce).
+        Grąžina iškastą bloką.
+        """
+        prev_block_hash = self.chain[-1].get_hash()
 
-        header = BlockHeader(
-            prev_hash=prev_hash,
+        block = Block.build(
+            index=len(self.chain),
+            prev_block_hash=prev_block_hash,
             version=self.version,
-            merkle_root=merkle_root,
-            difficulty_target=self.difficulty_target
+            transactions=txs,
+            difficulty_target=self.difficulty_target,
         )
 
-        prefix = self.difficulty_target
-        attempts = 0
-
         print("[MINING] Pradedamas kasimas naujam blokui...")
-        print(f"         Ankstesnio bloko hash: {prev_hash[:16]}...")
-        print(f"         Transakcijų kiekis:     {len(txs)}")
-        print(f"         Tikslas: hash prasideda '{prefix}'\n")
+        print(f"         Bloko indeksas:        {block.index}")
+        print(f"         Ankstesnio bloko hash: {prev_block_hash[:16]}...")
+        print(f"         Transakcijų kiekis:    {len(txs)}")
+        print(f"         Tikslas: hash prasideda '{block.header.difficulty_target}'\n")
 
-        while True:
-            attempts += 1
-            current_hash = my_hash(header.header_string())
+        start = time.time()
+        mined_hash = block.mine()
+        end = time.time()
 
-            if current_hash.startswith(prefix):
-                print(f"[FOUND] Proof-of-Work rastas!")
-                print(f"        nonce = {header.nonce}")
-                print(f"        hash  = {current_hash}\n")
-                break
+        print("[FOUND] Blokas iškastas!")
+        print(f"        Hash         = {mined_hash}")
+        print(f"        Nonce        = {block.header.nonce}")
+        print(f"        Difficulty   = {block.header.difficulty_target}")
+        print(f"        Kasybos laikas = {end - start:.4f} s\n")
 
-            header.nonce += 1
-
-            if attempts % 100000 == 0:
-                print(f"[MINING] Bandymų: {attempts}, nonce={header.nonce}")
-
-        new_block = Block(header, txs)
-        return new_block
+        return block
 
     # ---------------------------
-    # STATE UPDATE (po bloko)
+    # STATE UPDATE
     # ---------------------------
 
-    def apply_block_state_changes(self, block: Block):
+    def apply_block_state_changes(self, block: Block) -> None:
+        """
+        Kai blokas patvirtintas:
+        - nurašom lėšas siuntėjams
+        - pridedam lėšas gavėjams
+        - išmetam tas transakcijas iš pending sąrašo
+        """
+        # Atnaujinam balansus
         for tx in block.transactions:
-            sender_user = self.users[tx.sender_key]
-            receiver_user = self.users[tx.receiver_key]
+            sender = self.users[tx.sender_key]
+            receiver = self.users[tx.receiver_key]
+            sender.debit(tx.amount)
+            receiver.credit(tx.amount)
 
-            sender_user.debit(tx.amount)
-            receiver_user.credit(tx.amount)
-
-        used_ids = {tx.tx_id for tx in block.transactions}
+        # Išvalom panaudotas transakcijas iš pending
+        used_ids = {t.tx_id for t in block.transactions}
         self.pending_transactions = [
             t for t in self.pending_transactions if t.tx_id not in used_ids
         ]
 
-    def add_block(self, block: Block):
+    def add_block_to_chain(self, block: Block) -> None:
+        """
+        Pridedam naują bloką į grandinę.
+        """
         self.chain.append(block)
 
     # ---------------------------
-    # VISAS CIKLAS
+    # PILNAS CIKLAS
     # ---------------------------
 
     def mine_until_done(self, block_tx_count: int = 100):
-        block_index = 1  # nes 0 yra genesis blokas
+        """
+        Kartojam:
+        - Paimti transakcijas
+        - Iškasti bloką
+        - Atnaujinti būseną
+        - Įdėti bloką į grandinę
+        Kol nelieka neapdorotų transakcijų.
+        """
 
         while len(self.pending_transactions) > 0:
             print("=" * 60)
-            print(f"[INFO] Kasamas blokas #{block_index}")
             print(f"[INFO] Grandinės ilgis dabar: {len(self.chain)} blokai (-as)")
             print(f"[INFO] Liko neapdorotų transakcijų: {len(self.pending_transactions)}\n")
 
-            txs_for_block = self.pick_transactions_for_block(block_tx_count)
-
-            if not txs_for_block:
+            tx_batch = self.pick_transactions_for_block(block_tx_count)
+            if not tx_batch:
                 print("[INFO] Nebėra transakcijų blokui -> stabdom.")
                 break
 
-            new_block = self.mine_block(txs_for_block)
+            # 1. kasa naują bloką
+            new_block = self.mine_block_from_transactions(tx_batch)
 
+            # 2. atnaujina balansus ir išmeta tx iš pending
             self.apply_block_state_changes(new_block)
-            self.add_block(new_block)
 
-            print(f"[CHAIN] Naujas blokas #{block_index} įtrauktas.")
-            print(f"[CHAIN] Naujo bloko hash: {new_block.block_hash()}")
-            print(f"[CHAIN] Nonce: {new_block.header.nonce}")
-            print(f"[CHAIN] Grandinės ilgis: {len(self.chain)}")
-            print(f"[CHAIN] Liko transakcijų eilėje: {len(self.pending_transactions)}\n")
+            # 3. prideda bloką į grandinę
+            self.add_block_to_chain(new_block)
 
-            block_index += 1
+            print(f"[CHAIN] Naujas blokas #{new_block.index} įtrauktas į grandinę.")
+            print(f"[CHAIN] Bloko hash: {new_block.get_hash()}")
+            print(f"[CHAIN] Likusios neįtrauktos transakcijos: {len(self.pending_transactions)}\n")
 
         print("=== Viskas baigta ===")
         print(f"Galutinis blokų kiekis: {len(self.chain)}")
         print(f"Vartotojų kiekis:       {len(self.users)}")
-        print(f"Paskutinio bloko hash:  {self.chain[-1].block_hash()[:32]}...")
+        print(f"Paskutinio bloko hash:  {self.chain[-1].get_hash()[:32]}...")
         print("======================\n")
-
-    # ---------------------------
-    # Pagalbinė metrika pabaigai
-    # ---------------------------
 
     def summary(self) -> str:
         return (
             f"Grandinės ilgis: {len(self.chain)} blokai\n"
             f"Vartotojų kiekis: {len(self.users)}\n"
             f"Laukiančių transakcijų: {len(self.pending_transactions)}\n"
-            f"Paskutinio bloko hash: {self.chain[-1].block_hash()}\n"
+            f"Paskutinio bloko hash: {self.chain[-1].get_hash()}\n"
         )

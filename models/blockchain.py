@@ -1,19 +1,3 @@
-"""
-blockchain.py
--------------
-Centralizuota blokų grandinės simuliacija v0.1.
-
-Funkcionalumas:
-- Sugeneruoja vartotojus ir jų balansus
-- Sugeneruoja transakcijas tarp vartotojų
-- Iš transakcijų formuoja blokus (po ~100 tx)
-- Kiekvieną bloką kasa (Proof-of-Work) kol bloko hash prasideda '000'
-- Po iškasimo atnaujina balansus ir išmeta panaudotas transakcijas
-- Prideda bloką į grandinę ir eina prie kito
-
-Tai pilnai atitinka tavo PoW modelį su nonce ir difficulty_target.
-"""
-
 import random
 import time
 import uuid
@@ -27,16 +11,13 @@ from models.block import Block
 
 class Blockchain:
     def __init__(self, difficulty_target: str = "000"):
-        # global state
         self.users: Dict[str, User] = {}
         self.pending_transactions: List[Transaction] = []
         self.chain: List[Block] = []
 
-        # metadata
-        self.version = 1  # int, nes tavo BlockHeader.version yra int
+        self.version = 1
         self.difficulty_target = difficulty_target
 
-        # sukurti genesis bloką
         self._create_genesis_block()
 
     def _create_genesis_block(self) -> None:
@@ -46,12 +27,11 @@ class Blockchain:
             index=0,
             prev_block_hash="0" * 64,
             version=self.version,
-            transactions=[],            # jokių tx
+            transactions=[],
             difficulty_target=self.difficulty_target,
             timestamp=int(time.time()),
         )
-
-        # genesis bloko PoW irgi galim prasukti, kad turėtum normalų hash
+        
         _ = genesis_block.mine()
 
         self.chain.append(genesis_block)
@@ -60,18 +40,8 @@ class Blockchain:
         print(f"     Hash: {genesis_block.get_hash()}")
         print(f"     Nonce: {genesis_block.header.nonce}\n")
 
-    # ---------------------------
-    # DUOMENŲ GENERAVIMAS
-    # ---------------------------
 
     def generate_users(self, n: int = 1000):
-        """
-        Sukuria n vartotojų.
-        Kiekvienas vartotojas turi:
-        - name
-        - public_key
-        - balance [100 .. 1_000_000]
-        """
         print(f"[INFO] Generuojami {n} vartotojai...")
 
         for _ in range(n):
@@ -88,11 +58,6 @@ class Blockchain:
         print(f"[OK] Sugeneruota {len(self.users)} vartotojų.\n")
 
     def generate_transactions(self, m: int = 10000):
-        """
-        Sugeneruoja m transakcijų tarp atsitiktinių vartotojų.
-        v0.1: šitoje versijoje DAR netikrinam balanso.
-        (Balanso tikrinimas ateis v0.2 kaip validacija.)
-        """
         print(f"[INFO] Generuojamos {m} transakcijos...")
 
         keys = list(self.users.keys())
@@ -110,28 +75,16 @@ class Blockchain:
 
         print(f"[OK] Sugeneruota {len(self.pending_transactions)} transakcijų.\n")
 
-    # ---------------------------
-    # BLOKO FORMAVIMAS
-    # ---------------------------
+
+
 
     def pick_transactions_for_block(self, k: int = 100) -> List[Transaction]:
-        """
-        Paimam pirmas k transakcijų iš laukiančių sąrašo.
-        (FIFO stiliaus atranka)
-        """
         return self.pending_transactions[:k]
 
-    # ---------------------------
-    # BLOKO KASYBA
-    # ---------------------------
+
+
 
     def mine_block_from_transactions(self, txs: List[Transaction]) -> Block:
-        """
-        Sukuria bloką iš duotų transakcijų,
-        priskiria jam previous hash,
-        tada kasa jį (Proof-of-Work, loop su nonce).
-        Grąžina iškastą bloką.
-        """
         prev_block_hash = self.chain[-1].get_hash()
 
         block = Block.build(
@@ -160,49 +113,29 @@ class Blockchain:
 
         return block
 
-    # ---------------------------
-    # STATE UPDATE
-    # ---------------------------
+
+
 
     def apply_block_state_changes(self, block: Block) -> None:
-        """
-        Kai blokas patvirtintas:
-        - nurašom lėšas siuntėjams
-        - pridedam lėšas gavėjams
-        - išmetam tas transakcijas iš pending sąrašo
-        """
-        # Atnaujinam balansus
         for tx in block.transactions:
             sender = self.users[tx.sender_key]
             receiver = self.users[tx.receiver_key]
             sender.debit(tx.amount)
             receiver.credit(tx.amount)
 
-        # Išvalom panaudotas transakcijas iš pending
         used_ids = {t.tx_id for t in block.transactions}
         self.pending_transactions = [
             t for t in self.pending_transactions if t.tx_id not in used_ids
         ]
 
     def add_block_to_chain(self, block: Block) -> None:
-        """
-        Pridedam naują bloką į grandinę.
-        """
         self.chain.append(block)
 
-    # ---------------------------
-    # PILNAS CIKLAS
-    # ---------------------------
+
+
+
 
     def mine_until_done(self, block_tx_count: int = 100):
-        """
-        Kartojam:
-        - Paimti transakcijas
-        - Iškasti bloką
-        - Atnaujinti būseną
-        - Įdėti bloką į grandinę
-        Kol nelieka neapdorotų transakcijų.
-        """
 
         while len(self.pending_transactions) > 0:
             print("=" * 60)
@@ -214,13 +147,10 @@ class Blockchain:
                 print("[INFO] Nebėra transakcijų blokui -> stabdom.")
                 break
 
-            # 1. kasa naują bloką
             new_block = self.mine_block_from_transactions(tx_batch)
 
-            # 2. atnaujina balansus ir išmeta tx iš pending
             self.apply_block_state_changes(new_block)
 
-            # 3. prideda bloką į grandinę
             self.add_block_to_chain(new_block)
 
             print(f"[CHAIN] Naujas blokas #{new_block.index} įtrauktas į grandinę.")
